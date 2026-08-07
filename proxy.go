@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -19,7 +20,9 @@ var defaultModel = "deepseek/deepseek-v4-flash"
 var proxyListenAddress = "0.0.0.0:3457"
 
 const (
-	defaultMaxTokens       = 128000
+	// defaultMaxTokens 是「单次生成 max_tokens」默认值，不是模型上下文窗口。
+	// DeepSeek V4 Flash 上下文约 1M；官方 max output 约 131K。历史 128000 易被误读成「上下文被限制为 128K」。
+	defaultMaxTokens       = 131072
 	defaultReasoningEffort = "high"
 )
 
@@ -331,22 +334,33 @@ func cleanMessages(messages []any) []any {
 func buildUpstreamBody(params map[string]any, stream bool) map[string]any {
 	sessionID := fmt.Sprintf("sess_%d", time.Now().UnixMilli())
 
-	maxTokens := defaultMaxTokens
-	if mt, ok := params["max_tokens"].(float64); ok {
-		maxTokens = int(mt)
-	} else if mt, ok := params["max_completion_tokens"].(float64); ok {
-		maxTokens = int(mt)
-	}
-
 	model := getDefaultModel()
 	if m, ok := params["model"].(string); ok && m != "" {
 		model = normalizeRequestModel(m)
 	}
 
+	// max_tokens = 单次生成上限；默认按模型 maxOutput，而非上下文窗口（1M）。
+	maxTokens := modelMaxOutputTokens(model)
+	if maxTokens <= 0 {
+		maxTokens = defaultMaxTokens
+	}
+	if mt, ok := params["max_tokens"].(float64); ok && int(mt) > 0 {
+		maxTokens = int(mt)
+	} else if mt, ok := params["max_completion_tokens"].(float64); ok && int(mt) > 0 {
+		maxTokens = int(mt)
+	}
+	// 客户端若把「上下文窗口」误当成 max_tokens 传入（如 1e6），按模型输出上限裁剪，避免上游拒识。
+	capOut := modelMaxOutputTokens(model)
+	if capOut > 0 && maxTokens > capOut {
+		log.Printf("  max_tokens %d exceeds model max output %d for %s; clamping (context_window=%d is separate)",
+			maxTokens, capOut, model, modelContextWindow(model))
+		maxTokens = capOut
+	}
+
 	body := map[string]any{
-		"model":        model,
-		"max_tokens":   maxTokens,
-		"session_id":   sessionID,
+		"model":            model,
+		"max_tokens":       maxTokens,
+		"session_id":       sessionID,
 		"reasoning_effort": defaultReasoningEffort,
 	}
 
@@ -423,10 +437,17 @@ func callClineAPI(params map[string]any, stream bool) (*http.Response, error) {
 			toolCount = len(t)
 		}
 	}
-	log.Printf("  upstream: account=%s stream=%v tools=%d msgs=%d max_tokens=%v effort=%v",
-		truncateEmail(acc.Email), stream, toolCount, getMsgCount(params), body["max_tokens"], body["reasoning_effort"])
+	client, err := clientForAccount(acc)
+	if err != nil {
+		return nil, fmt.Errorf("account %s proxy: %w", acc.Email, err)
+	}
 
-	resp, err := httpClient.Do(req)
+	modelID, _ := body["model"].(string)
+	log.Printf("  upstream: account=%s proxy=%s stream=%v tools=%d msgs=%d model=%s max_tokens=%v (output cap; context_window=%d) effort=%v",
+		truncateEmail(acc.Email), proxyLabel(acc.ProxyURL), stream, toolCount, getMsgCount(params),
+		modelID, body["max_tokens"], modelContextWindow(modelID), body["reasoning_effort"])
+
+	resp, err := client.Do(req)
 	if err != nil {
 		// 网络错误：临时短冷却 5 分钟
 		markAccountCooldown(acc, "network error: "+err.Error(), 5*time.Minute)
@@ -438,8 +459,13 @@ func callClineAPI(params map[string]any, stream bool) (*http.Response, error) {
 		// Refresh token and retry
 		if err := refreshAccountToken(acc); err == nil {
 			token = acc.AccessToken
+			// body reader was consumed on first attempt; rebuild request for retry
+			req, err = http.NewRequest("POST", clineAPIBase+"/chat/completions", bytes.NewReader(bodyJSON))
+			if err != nil {
+				return nil, fmt.Errorf("create retry request: %w", err)
+			}
 			req.Header = clineHeaders(token, sessionID)
-			resp, err = httpClient.Do(req)
+			resp, err = client.Do(req)
 			if err != nil {
 				return nil, fmt.Errorf("upstream retry: %w", err)
 			}
@@ -478,6 +504,20 @@ func callClineAPI(params map[string]any, stream bool) (*http.Response, error) {
 
 	bumpUsage(acc)
 	return resp, nil
+}
+
+func proxyLabel(proxyURL string) string {
+	if strings.TrimSpace(proxyURL) == "" {
+		return "direct"
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil || u.Host == "" {
+		return "configured"
+	}
+	if u.User != nil {
+		return u.Scheme + "://***@" + u.Host
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 func truncateEmail(email string) string {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -121,8 +122,12 @@ func saveCredentials(rt string) {
 }
 
 func workosDeviceAuth() (*deviceAuthResp, error) {
+	return workosDeviceAuthWithClient(nil)
+}
+
+func workosDeviceAuthWithClient(client *http.Client) (*deviceAuthResp, error) {
 	form := url.Values{"client_id": {workosClientID}}
-	resp, err := httpPostForm(workosDeviceAuthURL, form)
+	resp, err := httpPostFormWithClient(client, workosDeviceAuthURL, form)
 	if err != nil {
 		return nil, fmt.Errorf("workos device auth: %w", err)
 	}
@@ -141,6 +146,10 @@ func workosDeviceAuth() (*deviceAuthResp, error) {
 }
 
 func pollWorkosToken(deviceCode string, interval, expiresIn int) (*authenticateResp, error) {
+	return pollWorkosTokenWithClient(nil, deviceCode, interval, expiresIn)
+}
+
+func pollWorkosTokenWithClient(client *http.Client, deviceCode string, interval, expiresIn int) (*authenticateResp, error) {
 	deadline := time.Now().Add(time.Duration(expiresIn) * time.Second)
 	currentInterval := interval
 	if currentInterval < 5 {
@@ -153,7 +162,7 @@ func pollWorkosToken(deviceCode string, interval, expiresIn int) (*authenticateR
 			"device_code": {deviceCode},
 			"client_id":   {workosClientID},
 		}
-		resp, err := httpPostForm(workosAuthenticateURL, form)
+		resp, err := httpPostFormWithClient(client, workosAuthenticateURL, form)
 		if err != nil {
 			return nil, fmt.Errorf("workos poll: %w", err)
 		}
@@ -187,11 +196,15 @@ func pollWorkosToken(deviceCode string, interval, expiresIn int) (*authenticateR
 }
 
 func registerWithCline(workosAccess, workosRefresh string) (*clineAuthResp, error) {
+	return registerWithClineWithClient(nil, workosAccess, workosRefresh)
+}
+
+func registerWithClineWithClient(client *http.Client, workosAccess, workosRefresh string) (*clineAuthResp, error) {
 	body := map[string]string{
 		"accessToken":  workosAccess,
 		"refreshToken": workosRefresh,
 	}
-	resp, err := httpPostJSON(clineAPIBase+"/auth/register", body)
+	resp, err := httpPostJSONWithClient(client, clineAPIBase+"/auth/register", body)
 	if err != nil {
 		return nil, fmt.Errorf("cline register: %w", err)
 	}
@@ -210,11 +223,15 @@ func registerWithCline(workosAccess, workosRefresh string) (*clineAuthResp, erro
 }
 
 func refreshClineToken(refreshToken string) (*clineRefreshResp, error) {
+	return refreshClineTokenWithClient(nil, refreshToken)
+}
+
+func refreshClineTokenWithClient(client *http.Client, refreshToken string) (*clineRefreshResp, error) {
 	body := map[string]string{
 		"refreshToken": refreshToken,
 		"grantType":    "refresh_token",
 	}
-	resp, err := httpPostJSON(clineAPIBase+"/auth/refresh", body)
+	resp, err := httpPostJSONWithClient(client, clineAPIBase+"/auth/refresh", body)
 	if err != nil {
 		return nil, fmt.Errorf("cline refresh: %w", err)
 	}

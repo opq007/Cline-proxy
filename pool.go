@@ -148,7 +148,11 @@ func getAccountByID(accountID string) *Account {
 }
 
 func refreshAccountToken(acc *Account) error {
-	resp, err := refreshClineToken(acc.RefreshToken)
+	client, err := clientForAccount(acc)
+	if err != nil {
+		return fmt.Errorf("proxy config: %w", err)
+	}
+	resp, err := refreshClineTokenWithClient(client, acc.RefreshToken)
 	if err != nil {
 		poolMu.Lock()
 		acc.Status = "expired"
@@ -246,7 +250,7 @@ func listAccounts() []*Account {
 	}
 	result := make([]*Account, len(p.Accounts))
 	for i, a := range p.Accounts {
-		// Don't expose tokens
+		// Don't expose tokens; proxyURL is safe to show in admin UI
 		result[i] = &Account{
 			AccountID:       a.AccountID,
 			Email:           a.Email,
@@ -257,7 +261,8 @@ func listAccounts() []*Account {
 			UsageDate:       a.UsageDate,
 			CreatedAt:       a.CreatedAt,
 			CooldownUntil:   a.CooldownUntil,
-			LastReason:     a.LastReason,
+			LastReason:      a.LastReason,
+			ProxyURL:        a.ProxyURL,
 		}
 	}
 	savePoolLocked()
@@ -415,5 +420,26 @@ func addAccountFromDeviceAuth() (*Account, error) {
 
 	addAccount(acc)
 	fmt.Printf("  Account added! Email: %s\n", email)
+	return acc, nil
+}
+
+// updateAccountProxy 更新账号出口代理；proxyURL 空字符串表示清除（改回宿主机直连）。
+func updateAccountProxy(accountID, proxyURL string) (*Account, error) {
+	normalized, err := normalizeProxyURL(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	acc := getAccountByID(accountID)
+	if acc == nil {
+		return nil, fmt.Errorf("account not found")
+	}
+	old := acc.ProxyURL
+	poolMu.Lock()
+	acc.ProxyURL = normalized
+	savePoolLocked()
+	poolMu.Unlock()
+	if old != normalized {
+		invalidateProxyClient(old)
+	}
 	return acc, nil
 }
