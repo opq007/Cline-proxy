@@ -148,10 +148,10 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
   <div class="section-body" style="padding:0">
     <table>
       <thead>
-        <tr><th>邮箱</th><th>状态</th><th title="本代理本地统计，不代表官方免费额度">本地今日/累计调用</th><th>最后使用</th><th>创建时间</th><th>操作</th></tr>
+        <tr><th>邮箱</th><th>状态</th><th>出口代理</th><th title="本代理本地统计，不代表官方免费额度">本地今日/累计调用</th><th>最后使用</th><th>创建时间</th><th>操作</th></tr>
       </thead>
       <tbody id="accountTableBody">
-        <tr><td colspan="6" class="empty">加载中...</td></tr>
+        <tr><td colspan="7" class="empty">加载中...</td></tr>
       </tbody>
     </table>
   </div>
@@ -168,7 +168,13 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
   </div>
 
   <div id="import-oauth" class="tab-content active">
-    <p style="color:var(--text2);margin-bottom:12px">通过浏览器完成 OAuth 认证，支持 Google/GitHub/邮箱登录，自动获取 refreshToken。</p>
+    <p style="color:var(--text2);margin-bottom:12px">通过浏览器完成 OAuth 认证，支持 Google/GitHub/邮箱登录，自动获取 refreshToken。可先填写出口代理，使 device 申请 / 轮询 / register 全程走该代理；浏览器登录请在同出口环境打开链接（可复制到远程指纹浏览器）。</p>
+    <div class="form-row">
+      <div class="field">
+        <label>出口代理（可选，空=宿主机直连）</label>
+        <input type="text" id="oauthProxy" placeholder="socks5://user:pass@host:1080 或 http://host:8080">
+      </div>
+    </div>
     <button class="btn btn-primary" onclick="startOAuth()" id="oauthBtn">🚀 开始 OAuth 登录</button>
     <div id="oauthProgress" style="display:none;margin-top:12px">
       <div style="display:flex;align-items:center;gap:12px">
@@ -176,8 +182,8 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
         <div>
           <div style="font-weight:500" id="oauthStatus">等待浏览器授权...</div>
           <div style="color:var(--text2);font-size:12px;margin-top:4px">
-            打开 <a href="#" id="oauthUrl" target="_blank" style="color:var(--accent)"></a>
-            并输入代码: <strong id="oauthUserCode"></strong>
+            复制链接到远程/指纹浏览器打开： <a href="#" id="oauthUrl" target="_blank" style="color:var(--accent)"></a>
+            代码: <strong id="oauthUserCode"></strong>
           </div>
         </div>
       </div>
@@ -186,7 +192,7 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
   </div>
 
   <div id="import-token" class="tab-content">
-    <p style="color:var(--text2);margin-bottom:12px">输入已有的 Cline refreshToken，系统会自动验证并加入池。</p>
+    <p style="color:var(--text2);margin-bottom:12px">输入已有的 Cline refreshToken，系统会自动验证并加入池。验证 refresh 时也会走下方代理。</p>
     <div class="form-row">
       <div class="field">
         <label>Refresh Token *</label>
@@ -199,6 +205,12 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
         <input type="text" id="tokenEmail" placeholder="user@example.com">
       </div>
     </div>
+    <div class="form-row">
+      <div class="field">
+        <label>出口代理（可选）</label>
+        <input type="text" id="tokenProxy" placeholder="socks5://host:1080 或 http://host:8080">
+      </div>
+    </div>
     <div class="form-actions">
       <button class="btn btn-primary" onclick="addByToken()">➕ 添加账号</button>
     </div>
@@ -206,11 +218,11 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
   </div>
 
   <div id="import-batch" class="tab-content">
-    <p style="color:var(--text2);margin-bottom:12px">批量导入多个账号。支持 JSON 数组或每行一个 token。</p>
+    <p style="color:var(--text2);margin-bottom:12px">批量导入多个账号。支持 JSON 数组或每行一个 token。JSON 可带 per-account <code>proxyURL</code>。</p>
     <div class="form-row">
       <div class="field">
-        <label>JSON 数组格式：[{"refreshToken":"...","email":"..."}]</label>
-        <textarea id="batchInput" placeholder='[{"refreshToken":"xxx","email":"u1@x.com"},{"refreshToken":"yyy","email":"u2@x.com"}]'></textarea>
+        <label>JSON：[{"refreshToken":"...","email":"...","proxyURL":"socks5://..."}]</label>
+        <textarea id="batchInput" placeholder='[{"refreshToken":"xxx","email":"u1@x.com","proxyURL":"socks5://127.0.0.1:1080"}]'></textarea>
       </div>
     </div>
     <div class="form-actions">
@@ -243,7 +255,7 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
   <div class="section-body">
     <div style="margin-bottom:10px">
       <button class="btn btn-sm btn-primary" onclick="refreshModels()">🔄 刷新模型</button>
-      <span style="font-size:12px;color:var(--text2)">自动同步上游官方免费模型（60 秒），仅显示不消耗额度的模型</span>
+      <span style="font-size:12px;color:var(--text2)">自动同步官方免费模型（60 分钟）；同步请求走账号出口代理。context=输入窗口，max_out=单次生成上限（≠上下文）</span>
     </div>
     <div id="modelsList">加载中...</div>
   </div>
@@ -341,6 +353,14 @@ applyTheme(getTheme());
 
 const _ = id => document.getElementById(id);
 const esc = s => { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; };
+// HTML 属性转义：必须处理引号。此前用 JSON.stringify 塞进 onclick="..." 会生成
+// onclick="editAccountProxy('id', "")" —— 第二个 " 截断属性，按钮点击完全无反应。
+const escAttr = s => String(s ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
 if (window.location.host) _('footerApiAddr').textContent = 'http://' + window.location.host;
 
 function toast(msg, t, duration) {
@@ -418,7 +438,7 @@ async function loadAccounts() {
     const list = d.data.accounts;
     const tbody = _('accountTableBody');
     if (!list || list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无账号，前往 <a href="#" onclick="switchTab(\'import\')" style="color:var(--accent);cursor:pointer">导入账号</a> 页添加</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无账号，前往 <a href="#" onclick="switchTab(\'import\')" style="color:var(--accent);cursor:pointer">导入账号</a> 页添加</td></tr>';
       return;
     }
     const sn = { active: '活跃', cooldown: '冷却', expired: '已过期' };
@@ -431,19 +451,52 @@ async function loadAccounts() {
         const until = a.cooldownUntil ? new Date(a.cooldownUntil).toLocaleString('zh-CN') : '';
         statusExtra = until ? '<div style="font-size:10px;color:var(--text2);margin-top:2px">预计 ' + esc(until) + ' 恢复</div>' : '';
       }
+      const proxyDisp = a.proxyURL
+        ? '<span class="mono" style="font-size:11px" title="' + esc(a.proxyURL) + '">' + esc(maskProxy(a.proxyURL)) + '</span>'
+        : '<span style="color:var(--text2);font-size:11px">宿主机</span>';
       return '<tr>' +
         '<td>' + esc(a.email) + '</td>' +
         '<td><span class="status ' + a.status + '"><span class="status-dot ' + a.status + '"></span>' + (sn[a.status] || a.status) + '</span>' + statusExtra + '</td>' +
+        '<td>' + proxyDisp + '</td>' +
           '<td title="本代理本地成功转发次数，不代表官方免费额度">' + (a.usageCountToday || 0) + ' / ' + (a.usageCount || 0) + '</td>' +
         '<td class="mono" style="font-size:11px">' + lu + '</td>' +
         '<td class="mono" style="font-size:11px">' + cr + '</td>' +
         '<td style="white-space:nowrap">' +
-          '<button class="btn btn-sm" onclick="testAccount(\'' + a.accountId + '\', this)" title="测试账号是否可用（成功会清除冷却/过期状态）">⚡</button> ' +
-          '<button class="btn btn-sm" onclick="resetAccount(\'' + a.accountId + '\')" title="重置本地今日统计">↻</button> ' +
-          '<button class="btn btn-sm btn-danger" onclick="deleteAccount(\'' + a.accountId + '\')" title="删除">✕</button>' +
+          '<button class="btn btn-sm" data-account-id="' + escAttr(a.accountId) + '" onclick="testAccount(this.getAttribute(\'data-account-id\'), this)" title="测试账号是否可用（成功会清除冷却/过期状态）">⚡</button> ' +
+          '<button class="btn btn-sm" data-account-id="' + escAttr(a.accountId) + '" data-proxy-url="' + escAttr(a.proxyURL || '') + '" onclick="editAccountProxyFromBtn(this)" title="编辑出口代理">🌐</button> ' +
+          '<button class="btn btn-sm" data-account-id="' + escAttr(a.accountId) + '" onclick="resetAccount(this.getAttribute(\'data-account-id\'))" title="重置本地今日统计">↻</button> ' +
+          '<button class="btn btn-sm btn-danger" data-account-id="' + escAttr(a.accountId) + '" onclick="deleteAccount(this.getAttribute(\'data-account-id\'))" title="删除">✕</button>' +
         '</td></tr>';
     }).join('');
   } catch (e) { toast('加载账号失败: ' + e.message, 'error'); }
+}
+
+function maskProxy(u) {
+  if (!u) return '';
+  try {
+    const x = new URL(u);
+    if (x.username) return x.protocol + '//***@' + x.host;
+    return x.protocol + '//' + x.host;
+  } catch { return u.length > 40 ? u.slice(0, 40) + '…' : u; }
+}
+
+// 从 data-* 读参，避免 inline onclick 与 JSON 引号互相截断
+function editAccountProxyFromBtn(btn) {
+  if (!btn) return;
+  const id = btn.getAttribute('data-account-id') || '';
+  const current = btn.getAttribute('data-proxy-url') || '';
+  return editAccountProxy(id, current);
+}
+
+async function editAccountProxy(id, current) {
+  if (!id) { toast('缺少 accountId', 'error'); return; }
+  const next = window.prompt('出口代理 URL（空=宿主机直连）\n支持 http:// https:// socks5:// socks5h://', current || '');
+  if (next === null) return; // 用户取消
+  try {
+    await api('POST', '/accounts/update', { accountId: id, proxyURL: String(next).trim() });
+    toast('代理已更新', 'success');
+    loadAccounts();
+  } catch (e) { toast('更新失败: ' + ((e && e.message) ? e.message : String(e)), 'error'); }
 }
 
 async function testAccount(id, btn) {
@@ -515,9 +568,12 @@ async function startOAuth() {
   _('oauthResult').style.display = 'none';
   _('oauthStatus').textContent = '正在连接 WorkOS...';
   try {
-    const d = await api('POST', '/oauth/start');
+    const proxyURL = (_('oauthProxy') && _('oauthProxy').value.trim()) || undefined;
+    const d = await api('POST', '/oauth/start', proxyURL ? { proxyURL } : {});
     const s = d.data;
-    _('oauthStatus').textContent = '请在浏览器中打开链接并输入代码';
+    _('oauthStatus').textContent = proxyURL
+      ? '服务端已走代理轮询；请在同出口环境打开链接'
+      : '请复制链接到浏览器（可用远程指纹浏览器）打开并登录';
     const u = _('oauthUrl');
     u.textContent = s.verificationUri;
     u.href = s.verificationUri;
@@ -555,11 +611,16 @@ async function addByToken() {
   const token = _('tokenInput').value.trim();
   if (!token) { toast('请输入 refreshToken', 'error'); return; }
   const email = _('tokenEmail').value.trim();
+  const proxyURL = (_('tokenProxy') && _('tokenProxy').value.trim()) || undefined;
   try {
-    const d = await api('POST', '/accounts/add', { refreshToken: token, email: email || undefined });
+    const body = { refreshToken: token };
+    if (email) body.email = email;
+    if (proxyURL) body.proxyURL = proxyURL;
+    const d = await api('POST', '/accounts/add', body);
     toast('账号添加成功: ' + (d.data.email || ''), 'success');
     _('tokenInput').value = '';
     _('tokenEmail').value = '';
+    if (_('tokenProxy')) _('tokenProxy').value = '';
     loadAccounts(); loadStats();
   } catch (e) { toast('添加失败: ' + e.message, 'error'); }
 }
@@ -723,9 +784,15 @@ async function loadModels() {
       const st = MODEL_STYLE[m.status] || MODEL_STYLE.unknown;
       const cost = COST_LABEL[m.cost] || m.cost || '';
       const synced = m.syncedAt ? new Date(m.syncedAt).toLocaleTimeString('zh-CN') : '-';
+      const ctx = m.contextWindow || m.context_window || 0;
+      const maxOut = m.maxOutputTokens || m.max_output_tokens || 0;
+      const ctxLabel = ctx >= 1000000 ? (Math.round(ctx/100000)/10) + 'M ctx' : (ctx ? Math.round(ctx/1000) + 'K ctx' : '');
+      const outLabel = maxOut ? Math.round(maxOut/1000) + 'K out' : '';
       return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;margin:4px 0;background:var(--bg3);border-radius:6px">' +
         '<span style="font-family:monospace;font-size:13px;flex:1">' + esc(m.id) + '</span>' +
         (m.cost === 'free' ? '<span style="font-size:11px;color:var(--green)">不扣费</span>' : '') +
+        (ctxLabel ? '<span class="model-tag" title="输入上下文窗口">' + esc(ctxLabel) + '</span>' : '') +
+        (outLabel ? '<span class="model-tag" title="单次 max_tokens 上限">' + esc(outLabel) + '</span>' : '') +
         (cost ? '<span class="model-tag">' + esc(cost) + '</span>' : '') +
         '<span class="model-tag" style="' + st.css + '">' + st.label + '</span>' +
         '<span style="font-size:11px;color:var(--text2);min-width:60px;text-align:right">' + synced + '</span>' +
@@ -738,9 +805,14 @@ async function refreshModels() {
   try {
     _('modelsProbeInfo').textContent = '· 同步中...';
     const d = await api('POST', '/models/refresh');
-    toast(d.data.message || '同步已开始', 'info');
+    // 兼容 success 时 message 在顶层，以及 data.message
+    const msg = (d && (d.message || (d.data && d.data.message))) || '同步已开始';
+    toast(msg, 'info');
     setTimeout(loadModels, 3000);
-  } catch (e) { toast('刷新失败: ' + e.message, 'error'); _('modelsProbeInfo').textContent = ''; }
+  } catch (e) {
+    toast('刷新失败: ' + ((e && e.message) ? e.message : String(e)), 'error');
+    _('modelsProbeInfo').textContent = '';
+  }
 }
 
 async function loadModelOptions() {

@@ -6,7 +6,8 @@ Cline API 的反向代理服务，支持多账号轮询、OpenAI 和 Anthropic M
 
 - **双协议兼容**：同时支持 `/v1/chat/completions`（OpenAI）和 `/v1/messages`（Anthropic Messages API）
 - **多账号轮询**：自动在多个 Cline 账号间切换负载（支持 `round_robin` / `fill` / `random` 策略）
-- **中文管理后台**：浏览器访问 `/admin/` 即可管理账号、API Key、模型配置、请求头、代理设置
+- **中文管理后台**：浏览器访问 `/admin/` 即可管理账号、API Key、模型配置、请求头、轮询策略
+- **每账号出口代理**：可为每个账号配置独立 `http` / `https` / `socks5` 代理（可空=宿主机直连），OAuth 注册 / Token 刷新 / 推理请求均走该代理，降低多账号同 IP 关联
 - **API Key 鉴权**：保护代理端点，支持生成/删除多个 API Key
 - **System Prompt 覆盖**：项目目录下放 `override.md` 则自动替换系统提示词，不存在则使用客户端自带
 - **账号导入**：支持 OAuth 浏览器登录、手动 Token 输入、批量文件导入
@@ -61,15 +62,34 @@ docker compose down
 
 在管理后台 **账号管理** → **导入账号**，选择以下任一方式：
 
-- **OAuth 浏览器登录**：点击按钮弹出 WorkOS 登录窗口，完成后自动填入
-- **手动输入 Token**：输入已有账号的 Access Token
-- **批量文件导入**：上传包含账号数据的 JSON 文件
+- **OAuth 浏览器登录**：可先填「出口代理」，再点开始；服务端 device 申请 / 轮询 / register 走该代理。复制返回的链接到**远程指纹浏览器**（或同出口环境）登录即可，本机进程会自动完成入库。
+- **手动输入 Token**：输入 refreshToken，可选邮箱与 `proxyURL`
+- **批量文件导入**：JSON 数组，每项可带 `proxyURL`
+
+```json
+[
+  {"refreshToken":"xxx","email":"a@x.com","proxyURL":"socks5://user:pass@1.2.3.4:1080"},
+  {"refreshToken":"yyy","email":"b@x.com","proxyURL":"http://127.0.0.1:7890"}
+]
+```
 
 账号列表操作列说明：
 
-- **⚡ 测试**：对账号发起一次真实探测请求。成功则将账号置为活跃（清除冷却/过期状态，相当于升级版重置）；失败则按上游返回的等待时长标记冷却并显示预计恢复时间。
+- **⚡ 测试**：对账号发起一次真实探测请求（走该账号代理）。成功则将账号置为活跃；失败则按上游等待时长标记冷却。
+- **🌐 代理**：编辑该账号出口代理；留空表示宿主机直连。
 - **↻ 重置**：仅重置该账号的「今日调用」，不影响累计调用、状态和 Token。
 - **✕ 删除**：从账号池移除该账号。
+
+#### 每账号出口代理说明
+
+| 场景 | 是否走账号代理 |
+|------|----------------|
+| OAuth device / 轮询 / Cline register | 是（导入时填写的 proxy） |
+| Token refresh、chat、账号测试 | 是 |
+| 浏览器打开登录页 | **否**（由你打开链接的环境决定，建议远程指纹浏览器） |
+| 全局模型列表同步 | 否（宿主机） |
+
+支持格式：`socks5://[user:pass@]host:port`、`socks5h://...`、`http://...`、`https://...`。代理 URL 与 refreshToken 一并保存在 `.cline-accounts.json`（文件权限 0600）。
 
 ### 2. 配置客户端
 
@@ -118,9 +138,13 @@ Model:    deepseek/deepseek-v4-flash
 
 | 模型 ID | 状态 | 说明 |
 |---------|:----:|------|
-| `deepseek/deepseek-v4-flash` | ✅ 可用 · 不消耗额度 | DeepSeek V4 Flash |
+| `deepseek/deepseek-v4-flash` | ✅ 可用 · 不消耗额度 | DeepSeek V4 Flash · 约 **1M 上下文** / 约 **131K 单次输出** |
 | `poolside/laguna-s-2.1:free` | ✅ 可用 · 不消耗额度 | Poolside Laguna S 2.1 |
 | `stepfun/step-3.7-flash` | ✅ 可用 · 不消耗额度 | StepFun 3.7 Flash |
+
+> **注意**：日志里的 `max_tokens` 是**单次生成输出上限**，不是上下文窗口。  
+> DeepSeek V4 Flash 上下文约 1M；若客户端未传 `max_tokens`，代理默认按模型 `maxOutputTokens`（约 131K）转发，不会把上下文“砍成 128K”。  
+> free 列表 = **本地 seed（离线兜底）∪ 官方 `/ai/cline/recommended-models` 的 `free` 字段**。不在 seed 的模型（如曾 404 的 `cline-free/glm-5.2`）不会强行写入；若官方 feed 再次下发，同步后会自动出现，无永久黑名单。
 
 ### 需要订阅
 

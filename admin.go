@@ -22,6 +22,7 @@ type oauthSessionState struct {
 	DeviceCode string
 	UserCode   string
 	AuthURL    string
+	ProxyURL   string // 本会话出站代理，写入新账号
 	CreatedAt  time.Time
 	Done       bool
 	Success    bool
@@ -46,6 +47,7 @@ func registerAdminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/admin/", adminStaticHandler)
 	mux.HandleFunc("/admin/api/accounts", corsHandler(handleAdminAccounts))
 	mux.HandleFunc("/admin/api/accounts/add", corsHandler(handleAdminAccountAdd))
+	mux.HandleFunc("/admin/api/accounts/update", corsHandler(handleAdminAccountUpdate))
 	mux.HandleFunc("/admin/api/accounts/delete", corsHandler(handleAdminAccountDelete))
 	mux.HandleFunc("/admin/api/accounts/test", corsHandler(handleAdminAccountTest))
 	mux.HandleFunc("/admin/api/oauth/start", corsHandler(handleOAuthStart))
@@ -92,7 +94,7 @@ func handleAdminAccounts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /admin/api/accounts/add  body: { refreshToken, email }
+// POST /admin/api/accounts/add  body: { refreshToken, email, proxyURL? }
 func handleAdminAccountAdd(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})
@@ -108,6 +110,7 @@ func handleAdminAccountAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RefreshToken string `json:"refreshToken"`
 		Email        string `json:"email"`
+		ProxyURL     string `json:"proxyURL"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "invalid JSON"})
@@ -119,8 +122,19 @@ func handleAdminAccountAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate by refreshing
-	resp, err := refreshClineToken(req.RefreshToken)
+	proxyURL, err := normalizeProxyURL(req.ProxyURL)
+	if err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
+		return
+	}
+	client, err := clientForProxyURL(proxyURL)
+	if err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "proxy: " + err.Error()})
+		return
+	}
+
+	// Validate by refreshing (via account proxy when set)
+	resp, err := refreshClineTokenWithClient(client, req.RefreshToken)
 	if err != nil {
 		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "invalid refreshToken: " + err.Error()})
 		return
@@ -138,13 +152,14 @@ func handleAdminAccountAdd(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:    parseExpiry(resp.Data.ExpiresAt) - 60000,
 		Status:       "active",
 		CreatedAt:    time.Now(),
+		ProxyURL:     proxyURL,
 	}
 	if resp.Data.RefreshToken != "" {
 		acc.RefreshToken = resp.Data.RefreshToken
 	}
 
 	addAccount(acc)
-	log.Printf("Account added via API: %s", req.Email)
+	log.Printf("Account added via API: %s proxy=%s", req.Email, proxyLabel(proxyURL))
 
 	writeAPI(w, http.StatusOK, apiResponse{
 		Success: true,
@@ -153,6 +168,59 @@ func handleAdminAccountAdd(w http.ResponseWriter, r *http.Request) {
 			"accountId": acc.AccountID,
 			"email":     acc.Email,
 			"status":    acc.Status,
+			"proxyURL":  acc.ProxyURL,
+		},
+	})
+}
+
+// POST /admin/api/accounts/update  body: { accountId, proxyURL? }
+// proxyURL 省略则不改；传 "" 清除代理（宿主机直连）。
+func handleAdminAccountUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
+		return
+	}
+	defer r.Body.Close()
+
+	var req struct {
+		AccountID string  `json:"accountId"`
+		ProxyURL  *string `json:"proxyURL"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "invalid JSON"})
+		return
+	}
+	if req.AccountID == "" {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "accountId is required"})
+		return
+	}
+	if req.ProxyURL == nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "proxyURL is required (use empty string to clear)"})
+		return
+	}
+
+	acc, err := updateAccountProxy(req.AccountID, *req.ProxyURL)
+	if err != nil {
+		status := http.StatusBadRequest
+		if err.Error() == "account not found" {
+			status = http.StatusNotFound
+		}
+		writeAPI(w, status, apiResponse{Error: err.Error()})
+		return
+	}
+
+	writeAPI(w, http.StatusOK, apiResponse{
+		Success: true,
+		Message: "账号代理已更新",
+		Data: map[string]any{
+			"accountId": acc.AccountID,
+			"email":     acc.Email,
+			"proxyURL":  acc.ProxyURL,
 		},
 	})
 }
@@ -190,14 +258,38 @@ func handleAdminAccountDelete(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// POST /admin/api/oauth/start  -- Start OAuth device login, returns URL
+// POST /admin/api/oauth/start  body: { proxyURL? }
+// Start OAuth device login; A/C/D hops use proxyURL when set, then persist it on the new account.
 func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})
 		return
 	}
 
-	device, err := workosDeviceAuth()
+	var req struct {
+		ProxyURL string `json:"proxyURL"`
+	}
+	// body optional
+	if r.Body != nil {
+		body, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if len(body) > 0 {
+			_ = json.Unmarshal(body, &req)
+		}
+	}
+
+	proxyURL, err := normalizeProxyURL(req.ProxyURL)
+	if err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
+		return
+	}
+	client, err := clientForProxyURL(proxyURL)
+	if err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "proxy: " + err.Error()})
+		return
+	}
+
+	device, err := workosDeviceAuthWithClient(client)
 	if err != nil {
 		writeAPI(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
 		return
@@ -213,6 +305,7 @@ func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		DeviceCode: device.DeviceCode,
 		UserCode:   device.UserCode,
 		AuthURL:    authURL,
+		ProxyURL:   proxyURL,
 		CreatedAt:  time.Now(),
 	}
 
@@ -220,7 +313,7 @@ func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	oauthSessions[sessionID] = state
 	oauthSessionsMu.Unlock()
 
-	// Start polling in background
+	// Start polling in background (same client/proxy as device auth + register)
 	go func() {
 		interval := device.Interval
 		if interval < 5 {
@@ -231,7 +324,7 @@ func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 			expiresIn = 300
 		}
 
-		workosTok, err := pollWorkosToken(device.DeviceCode, interval, expiresIn)
+		workosTok, err := pollWorkosTokenWithClient(client, device.DeviceCode, interval, expiresIn)
 		if err != nil {
 			oauthSessionsMu.Lock()
 			state.Error = err.Error()
@@ -241,7 +334,7 @@ func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		cline, err := registerWithCline(workosTok.AccessToken, workosTok.RefreshToken)
+		cline, err := registerWithClineWithClient(client, workosTok.AccessToken, workosTok.RefreshToken)
 		if err != nil {
 			oauthSessionsMu.Lock()
 			state.Error = err.Error()
@@ -264,6 +357,7 @@ func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt:    parseExpiry(cline.Data.ExpiresAt) - 60000,
 			Status:       "active",
 			CreatedAt:    time.Now(),
+			ProxyURL:     proxyURL,
 		}
 		addAccount(acc)
 
@@ -272,7 +366,7 @@ func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		state.Success = true
 		state.Email = email
 		oauthSessionsMu.Unlock()
-		log.Printf("OAuth account added: %s", email)
+		log.Printf("OAuth account added: %s proxy=%s", email, proxyLabel(proxyURL))
 	}()
 
 	writeAPI(w, http.StatusOK, apiResponse{
@@ -281,6 +375,7 @@ func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 			"sessionId":       sessionID,
 			"verificationUri": authURL,
 			"userCode":        device.UserCode,
+			"proxyURL":        proxyURL,
 		},
 	})
 }
@@ -316,7 +411,7 @@ func handleOAuthStatus(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, http.StatusOK, apiResponse{Success: true, Data: resp})
 }
 
-// POST /admin/api/sso/import  body: { ssoCookies: string, email?: string }
+// POST /admin/api/sso/import  body: { ssoCookies: string, email?: string, proxyURL?: string }
 func handleSSOImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})
@@ -332,6 +427,7 @@ func handleSSOImport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SSOCookies string `json:"ssoCookies"`
 		Email      string `json:"email"`
+		ProxyURL   string `json:"proxyURL"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "invalid JSON"})
@@ -340,6 +436,17 @@ func handleSSOImport(w http.ResponseWriter, r *http.Request) {
 
 	if req.SSOCookies == "" {
 		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "ssoCookies is required"})
+		return
+	}
+
+	proxyURL, err := normalizeProxyURL(req.ProxyURL)
+	if err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: err.Error()})
+		return
+	}
+	client, err := clientForProxyURL(proxyURL)
+	if err != nil {
+		writeAPI(w, http.StatusBadRequest, apiResponse{Error: "proxy: " + err.Error()})
 		return
 	}
 
@@ -361,7 +468,7 @@ func handleSSOImport(w http.ResponseWriter, r *http.Request) {
 		// Try to use the cookie as a refresh token directly (common format)
 		if strings.HasPrefix(line, "workos:") || len(line) > 20 {
 			token := strings.TrimPrefix(line, "workos:")
-			resp, err := refreshClineToken(token)
+			resp, err := refreshClineTokenWithClient(client, token)
 			if err != nil {
 				errors = append(errors, fmt.Sprintf("token %s...: %v", truncate(token, 16), err))
 				continue
@@ -379,6 +486,10 @@ func handleSSOImport(w http.ResponseWriter, r *http.Request) {
 				ExpiresAt:    parseExpiry(resp.Data.ExpiresAt) - 60000,
 				Status:       "active",
 				CreatedAt:    time.Now(),
+				ProxyURL:     proxyURL,
+			}
+			if resp.Data.RefreshToken != "" {
+				acc.RefreshToken = resp.Data.RefreshToken
 			}
 			addAccount(acc)
 			imported++
@@ -400,7 +511,7 @@ func handleSSOImport(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /admin/api/batch-import  body: { tokens: [{ refreshToken, email }] }
+// POST /admin/api/batch-import  body: { tokens: [{ refreshToken, email, proxyURL? }] }
 func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeAPI(w, http.StatusMethodNotAllowed, apiResponse{Error: "method not allowed"})
@@ -417,6 +528,7 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 		Tokens []struct {
 			RefreshToken string `json:"refreshToken"`
 			Email        string `json:"email"`
+			ProxyURL     string `json:"proxyURL"`
 		} `json:"tokens"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -436,7 +548,17 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 		if t.RefreshToken == "" {
 			continue
 		}
-		resp, err := refreshClineToken(t.RefreshToken)
+		proxyURL, err := normalizeProxyURL(t.ProxyURL)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", t.Email, err))
+			continue
+		}
+		client, err := clientForProxyURL(proxyURL)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: proxy %v", t.Email, err))
+			continue
+		}
+		resp, err := refreshClineTokenWithClient(client, t.RefreshToken)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: %v", t.Email, err))
 			continue
@@ -453,6 +575,10 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt:    parseExpiry(resp.Data.ExpiresAt) - 60000,
 			Status:       "active",
 			CreatedAt:    time.Now(),
+			ProxyURL:     proxyURL,
+		}
+		if resp.Data.RefreshToken != "" {
+			acc.RefreshToken = resp.Data.RefreshToken
 		}
 		addAccount(acc)
 		imported++
@@ -632,7 +758,17 @@ func testAccount(acc *Account) (map[string]any, string) {
 	}
 	req.Header = clineHeaders(token, sessionID)
 
-	resp, err := httpClient.Do(req)
+	client, err := clientForAccount(acc)
+	if err != nil {
+		return map[string]any{
+			"accountId": acc.AccountID,
+			"email":     acc.Email,
+			"status":    "error",
+			"reason":    "proxy: " + err.Error(),
+		}, "error"
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		// 网络错误：5 分钟短冷却
 		markAccountCooldown(acc, "network error: "+err.Error(), 5*time.Minute)
@@ -924,9 +1060,20 @@ func handleAdminUpdateConfig(w http.ResponseWriter, r *http.Request) {
 // GET /admin/api/models
 func handleAdminModels(w http.ResponseWriter, r *http.Request) {
 	ensureModelsFresh()
+	models := getFreeModels()
+	// 补全缺省的上下文/输出上限，避免前端只看到 id
+	for _, m := range models {
+		if m.ContextWindow <= 0 {
+			m.ContextWindow = inferContextWindow(m.ID)
+		}
+		if m.MaxOutputTokens <= 0 {
+			m.MaxOutputTokens = inferMaxOutputTokens(m.ID)
+		}
+	}
 	writeAPI(w, http.StatusOK, apiResponse{Success: true, Data: map[string]any{
-		"models":   getFreeModels(),
+		"models":   models,
 		"lastSync": modelsLastSync,
+		"note":     "contextWindow=输入上下文; maxOutputTokens=单次生成上限(max_tokens)，二者不同",
 	}})
 }
 
@@ -941,11 +1088,19 @@ func handleAdminModelsRefresh(w http.ResponseWriter, r *http.Request) {
 	syncing := modelsSyncing
 	modelsMu.Unlock()
 	if syncing {
-		writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: "sync already running"})
+		writeAPI(w, http.StatusOK, apiResponse{
+			Success: true,
+			Message: "sync already running",
+			Data:    map[string]any{"message": "sync already running"},
+		})
 		return
 	}
 	go syncModelsOnce()
-	writeAPI(w, http.StatusOK, apiResponse{Success: true, Message: "model sync started"})
+	writeAPI(w, http.StatusOK, apiResponse{
+		Success: true,
+		Message: "model sync started (via account proxy when available)",
+		Data:    map[string]any{"message": "model sync started (via account proxy when available)"},
+	})
 }
 
 // GET /admin/api/stats
