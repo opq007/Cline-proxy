@@ -98,9 +98,11 @@ func startProxy(host string, port int) error {
 		})
 	}))
 
-	// Admin API (frontend + REST)
+	// Admin UI + /admin/api/* only. Admin token (ADMIN_TOKEN) is enforced inside
+	// registerAdminRoutes — it is intentionally NOT applied to the handlers below.
 	registerAdminRoutes(mux)
 
+	// Client / Cline-facing auth: pool API keys only (p.Keys). Independent of ADMIN_TOKEN.
 	apiKeyHandler := func(next http.HandlerFunc) http.HandlerFunc {
 		return corsHandler(func(w http.ResponseWriter, r *http.Request) {
 			// Allow requests without key if no keys configured
@@ -117,6 +119,7 @@ func startProxy(host string, port int) error {
 				}
 			}
 
+			// Compare against proxy API keys only — never against admin token.
 			valid := false
 			for _, k := range p.Keys {
 				if k == key {
@@ -276,7 +279,13 @@ func startProxy(host string, port int) error {
 	fmt.Println(strings.Repeat("=", 58))
 	fmt.Printf("  http://%s\n", addr)
 	fmt.Printf("  http://%s/v1\n", addr)
-	fmt.Println("  API Key: any value")
+	fmt.Printf("  Admin:   http://%s/admin/\n", addr)
+	if adminAuthRequired() {
+		fmt.Println("  Admin auth: ENABLED (ADMIN_TOKEN / -admin-token / config)")
+	} else {
+		fmt.Println("  Admin auth: DISABLED (set ADMIN_TOKEN for public deploy!)")
+	}
+	fmt.Println("  API Key: pool keys (empty pool = open proxy API)")
 	fmt.Printf("  Model:   %s (auto-detected)\n", getDefaultModel())
 	fmt.Printf("  Accounts: %d total, %d active\n", len(loadPool().Accounts), activeCount)
 	fmt.Println(strings.Repeat("=", 58))
@@ -301,7 +310,7 @@ func corsHandler(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, anthropic-version, anthropic-beta")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, X-Admin-Token, anthropic-version, anthropic-beta")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)

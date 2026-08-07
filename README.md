@@ -7,6 +7,7 @@ Cline API 的反向代理服务，支持多账号轮询、OpenAI 和 Anthropic M
 - **双协议兼容**：同时支持 `/v1/chat/completions`（OpenAI）和 `/v1/messages`（Anthropic Messages API）
 - **多账号轮询**：自动在多个 Cline 账号间切换负载（支持 `round_robin` / `fill` / `random` 策略）
 - **中文管理后台**：浏览器访问 `/admin/` 即可管理账号、API Key、模型配置、请求头、轮询策略
+- **管理后台鉴权**：公网部署可设置 `ADMIN_TOKEN`（或 `-admin-token` / 配置项 `adminToken`），访问后台需登录令牌
 - **每账号出口代理**：可为每个账号配置独立 `http` / `https` / `socks5` 代理（可空=宿主机直连），OAuth 注册 / Token 刷新 / 推理请求均走该代理，降低多账号同 IP 关联
 - **API Key 鉴权**：保护代理端点，支持生成/删除多个 API Key
 - **System Prompt 覆盖**：项目目录下放 `override.md` 则自动替换系统提示词，不存在则使用客户端自带
@@ -33,18 +34,44 @@ go build -o cline-proxy.exe .
 # 指定端口
 ./cline-proxy.exe -port 3457
 
+# 公网 / 不可信网络：启用管理后台令牌（三选一，优先级：CLI > 环境变量 > 配置文件）
+./cline-proxy.exe -admin-token "your-strong-secret"
+# 或
+# set ADMIN_TOKEN=your-strong-secret          # Windows CMD
+# $env:ADMIN_TOKEN="your-strong-secret"     # PowerShell
+# export ADMIN_TOKEN=your-strong-secret     # Linux/macOS
+# 或在 .cline-accounts.json 增加 "adminToken": "your-strong-secret"
+
 # 构建 + 启动 + 打开浏览器
 go run . -start
 ```
 
 启动后本机访问 http://127.0.0.1:3457/admin/；局域网设备访问 http://<本机局域网IP>:3457/admin/。
 
-监听所有网卡会开放管理后台给同网设备，建议仅在可信局域网使用，并在系统防火墙中限制 3457 端口。
+监听所有网卡会开放管理后台给同网设备。**公网部署必须设置 `ADMIN_TOKEN`**，否则任何人都能进入 `/admin/` 管理账号与密钥。未设置令牌时保持本地开发便利（后台不鉴权）。
+
+### 管理后台鉴权
+
+| 注入方式 | 说明 |
+|----------|------|
+| 环境变量 `ADMIN_TOKEN` 或 `CLINE_ADMIN_TOKEN` | 推荐 Docker / 公网 |
+| 启动参数 `-admin-token` | 优先级最高 |
+| 配置文件 `.cline-accounts.json` 字段 `adminToken` | 持久化，GET 接口不会回显明文 |
+
+启用后：
+
+1. 打开 `/admin/` 会显示登录页，输入同一令牌即可
+2. 浏览器会保存会话（`sessionStorage` / Cookie `cline_admin_token`）
+3. 管理 API 也可使用请求头：`Authorization: Bearer <token>` 或 `X-Admin-Token: <token>`
+
+> 注意：这是**管理后台**令牌，与「设置 → API Keys」里给客户端用的代理 API Key 不同。  
+> **作用范围**：仅 `/admin/` 与 `/admin/api/*`。`/v1/chat/completions`、`/v1/messages`、`/v1/models`、`/health` 等客户端/Cline 调用**不校验** `ADMIN_TOKEN`，仍只走原有 API Key 逻辑。
 
 ### Docker 部署
 
 ```bash
-# 构建并启动
+# 公网务必传入 ADMIN_TOKEN
+export ADMIN_TOKEN='your-strong-secret'   # Windows PowerShell: $env:ADMIN_TOKEN='...'
 docker compose up -d
 
 # 查看日志
@@ -167,6 +194,7 @@ Release 版本号以 `v` 开头，从 `v0.0.1` 开始按语义版本递增：首
 ├── proxy.go              HTTP 服务、API 路由与协议转换
 ├── models.go             官方免费模型同步
 ├── admin.go              管理后台 REST API
+├── admin_auth.go         管理后台访问令牌鉴权
 ├── admin_html.go         管理后台页面
 ├── auth.go               WorkOS OAuth 登录与 Token 刷新
 ├── pool.go               账号池管理与持久化

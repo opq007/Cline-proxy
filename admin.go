@@ -44,27 +44,38 @@ func writeAPI(w http.ResponseWriter, status int, resp apiResponse) {
 }
 
 func registerAdminRoutes(mux *http.ServeMux) {
+	// Static shell is public (no secrets); all data APIs require admin token when configured.
 	mux.HandleFunc("/admin/", adminStaticHandler)
-	mux.HandleFunc("/admin/api/accounts", corsHandler(handleAdminAccounts))
-	mux.HandleFunc("/admin/api/accounts/add", corsHandler(handleAdminAccountAdd))
-	mux.HandleFunc("/admin/api/accounts/update", corsHandler(handleAdminAccountUpdate))
-	mux.HandleFunc("/admin/api/accounts/delete", corsHandler(handleAdminAccountDelete))
-	mux.HandleFunc("/admin/api/accounts/test", corsHandler(handleAdminAccountTest))
-	mux.HandleFunc("/admin/api/oauth/start", corsHandler(handleOAuthStart))
-	mux.HandleFunc("/admin/api/oauth/status", corsHandler(handleOAuthStatus))
-	mux.HandleFunc("/admin/api/sso/import", corsHandler(handleSSOImport))
-	mux.HandleFunc("/admin/api/stats", corsHandler(handleAdminStats))
-	mux.HandleFunc("/admin/api/batch-import", corsHandler(handleBatchImport))
-	mux.HandleFunc("/admin/api/accounts/refresh-all", corsHandler(handleAdminRefreshAll))
-	mux.HandleFunc("/admin/api/accounts/delete-all", corsHandler(handleAdminDeleteAll))
-	mux.HandleFunc("/admin/api/accounts/reset", corsHandler(handleAdminAccountReset))
-	mux.HandleFunc("/admin/api/keys", corsHandler(handleAdminGetKeys))
-	mux.HandleFunc("/admin/api/keys/generate", corsHandler(handleAdminGenerateKey))
-	mux.HandleFunc("/admin/api/keys/delete", corsHandler(handleAdminDeleteKey))
-	mux.HandleFunc("/admin/api/models", corsHandler(handleAdminModels))
-	mux.HandleFunc("/admin/api/models/refresh", corsHandler(handleAdminModelsRefresh))
-	mux.HandleFunc("/admin/api/config", corsHandler(handleAdminConfig))
-	mux.HandleFunc("/admin/api/config/update", corsHandler(handleAdminUpdateConfig))
+
+	// Auth endpoints (public): status / login / logout
+	mux.HandleFunc("/admin/api/auth/status", corsHandler(handleAdminAuthStatus))
+	mux.HandleFunc("/admin/api/auth/login", corsHandler(handleAdminAuthLogin))
+	mux.HandleFunc("/admin/api/auth/logout", corsHandler(handleAdminAuthLogout))
+
+	protect := func(h http.HandlerFunc) http.HandlerFunc {
+		return corsHandler(requireAdminAuth(h))
+	}
+
+	mux.HandleFunc("/admin/api/accounts", protect(handleAdminAccounts))
+	mux.HandleFunc("/admin/api/accounts/add", protect(handleAdminAccountAdd))
+	mux.HandleFunc("/admin/api/accounts/update", protect(handleAdminAccountUpdate))
+	mux.HandleFunc("/admin/api/accounts/delete", protect(handleAdminAccountDelete))
+	mux.HandleFunc("/admin/api/accounts/test", protect(handleAdminAccountTest))
+	mux.HandleFunc("/admin/api/oauth/start", protect(handleOAuthStart))
+	mux.HandleFunc("/admin/api/oauth/status", protect(handleOAuthStatus))
+	mux.HandleFunc("/admin/api/sso/import", protect(handleSSOImport))
+	mux.HandleFunc("/admin/api/stats", protect(handleAdminStats))
+	mux.HandleFunc("/admin/api/batch-import", protect(handleBatchImport))
+	mux.HandleFunc("/admin/api/accounts/refresh-all", protect(handleAdminRefreshAll))
+	mux.HandleFunc("/admin/api/accounts/delete-all", protect(handleAdminDeleteAll))
+	mux.HandleFunc("/admin/api/accounts/reset", protect(handleAdminAccountReset))
+	mux.HandleFunc("/admin/api/keys", protect(handleAdminGetKeys))
+	mux.HandleFunc("/admin/api/keys/generate", protect(handleAdminGenerateKey))
+	mux.HandleFunc("/admin/api/keys/delete", protect(handleAdminDeleteKey))
+	mux.HandleFunc("/admin/api/models", protect(handleAdminModels))
+	mux.HandleFunc("/admin/api/models/refresh", protect(handleAdminModelsRefresh))
+	mux.HandleFunc("/admin/api/config", protect(handleAdminConfig))
+	mux.HandleFunc("/admin/api/config/update", protect(handleAdminUpdateConfig))
 }
 
 func adminStaticHandler(w http.ResponseWriter, r *http.Request) {
@@ -980,12 +991,14 @@ func handleAdminConfig(w http.ResponseWriter, r *http.Request) {
 		address = proxyListenAddress
 	}
 	writeAPI(w, http.StatusOK, apiResponse{Success: true, Data: map[string]any{
-		"address":      address,
-		"strategy":     cfg.Strategy,
-		"version":      "go-1.1",
-		"poolPath":     poolPath,
-		"defaultModel": getDefaultModel(),
-		"headers":      cfg.Headers,
+		"address":         address,
+		"strategy":        cfg.Strategy,
+		"version":         "go-1.1",
+		"poolPath":        poolPath,
+		"defaultModel":    getDefaultModel(),
+		"headers":         cfg.Headers,
+		"adminAuth":       adminAuthRequired(),
+		// never expose adminToken value
 	}})
 }
 

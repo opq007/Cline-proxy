@@ -95,10 +95,31 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
 .theme-toggle .icon{font-size:14px}
 [data-theme="dark"] .theme-toggle .light-label{display:none}
 :root:not([data-theme="dark"]) .theme-toggle .dark-label{display:none}
+.login-overlay{position:fixed;inset:0;background:var(--bg);z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px}
+.login-card{width:100%;max-width:400px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:28px 24px;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.login-card h2{font-size:18px;margin-bottom:8px}
+.login-card p{font-size:13px;color:var(--text2);margin-bottom:16px;line-height:1.5}
+.login-card .form-actions{margin-top:16px}
+.login-error{color:var(--red);font-size:12px;margin-top:8px;min-height:18px}
+.sidebar-logout{margin:8px 16px 0;width:calc(100% - 32px)}
 </style>
 </head>
 <body>
-<div class="layout">
+<div id="loginOverlay" class="login-overlay" style="display:none">
+  <div class="login-card">
+    <h2>🔐 管理后台登录</h2>
+    <p>此实例已启用管理鉴权。请输入 <code>ADMIN_TOKEN</code>（或启动参数 <code>-admin-token</code> / 配置项 <code>adminToken</code>）。</p>
+    <div class="field">
+      <label style="display:block;font-size:12px;color:var(--text2);margin-bottom:4px">访问令牌</label>
+      <input type="password" id="loginTokenInput" placeholder="Admin Token" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAdminLogin()">
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="submitAdminLogin()">登录</button>
+    </div>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+<div class="layout" id="appLayout">
 <div class="sidebar">
 <h1><span>⚡</span>Cline 代理<button class="theme-toggle" onclick="toggleTheme()" title="切换主题"><span class="icon" id="themeIcon">☀️</span><span class="light-label">浅色</span><span class="dark-label">深色</span></button></h1>
 <div class="nav-item active" data-tab="dashboard"><span>📊</span> 仪表盘</div>
@@ -108,6 +129,7 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
 <div style="margin-top:auto;padding:16px;font-size:12px;color:var(--text2)">
   <div>管理面板: <a href="/admin/" style="color:var(--accent)">/admin/</a></div>
   <div>API 地址: <span id="footerApiAddr">http://127.0.0.1:3457</span></div>
+  <button class="btn btn-sm sidebar-logout" id="logoutBtn" style="display:none" onclick="logoutAdmin()">退出登录</button>
 </div>
 </div>
 
@@ -327,6 +349,22 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
 
 <script>
 const API = '/admin/api';
+const ADMIN_TOKEN_KEY = 'cline_admin_token';
+
+function getStoredAdminToken() {
+  try { return sessionStorage.getItem(ADMIN_TOKEN_KEY) || localStorage.getItem(ADMIN_TOKEN_KEY) || ''; }
+  catch (e) { return ''; }
+}
+function setStoredAdminToken(t, remember) {
+  try {
+    sessionStorage.setItem(ADMIN_TOKEN_KEY, t || '');
+    if (remember) localStorage.setItem(ADMIN_TOKEN_KEY, t || '');
+    else localStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch (e) {}
+}
+function clearStoredAdminToken() {
+  try { sessionStorage.removeItem(ADMIN_TOKEN_KEY); localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
+}
 
 // ========== 主题切换 ==========
 function getTheme() {
@@ -409,12 +447,119 @@ document.querySelectorAll('#importTabs .tab').forEach(el => {
 
 // ========== API 请求 ==========
 async function api(method, path, body) {
-  const opts = { method, headers: {} };
+  const opts = { method, headers: {}, credentials: 'same-origin' };
+  const tok = getStoredAdminToken();
+  if (tok) {
+    opts.headers['Authorization'] = 'Bearer ' + tok;
+    opts.headers['X-Admin-Token'] = tok;
+  }
   if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   const res = await fetch(API + path, opts);
-  const data = await res.json();
+  let data;
+  try { data = await res.json(); } catch (e) { data = { error: 'invalid response' }; }
+  if (res.status === 401) {
+    clearStoredAdminToken();
+    showLogin(data.error || '需要管理令牌');
+    throw new Error(data.error || 'unauthorized');
+  }
   if (!data.success && data.error) throw new Error(data.error);
   return data;
+}
+
+function showLogin(msg) {
+  const ov = _('loginOverlay');
+  if (ov) ov.style.display = 'flex';
+  const app = _('appLayout');
+  if (app) app.style.display = 'none';
+  const err = _('loginError');
+  if (err) err.textContent = msg || '';
+  const btn = _('logoutBtn');
+  if (btn) btn.style.display = 'none';
+  setTimeout(() => { const i = _('loginTokenInput'); if (i) i.focus(); }, 50);
+}
+
+function hideLogin() {
+  const ov = _('loginOverlay');
+  if (ov) ov.style.display = 'none';
+  const app = _('appLayout');
+  if (app) app.style.display = 'flex';
+  const btn = _('logoutBtn');
+  if (btn) btn.style.display = adminAuthRequired ? 'inline-flex' : 'none';
+}
+
+let adminAuthRequired = false;
+
+async function submitAdminLogin() {
+  const input = _('loginTokenInput');
+  const tok = (input && input.value || '').trim();
+  const err = _('loginError');
+  if (!tok) { if (err) err.textContent = '请输入令牌'; return; }
+  try {
+    const res = await fetch(API + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ token: tok })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      if (err) err.textContent = (data && data.error) || '令牌无效';
+      return;
+    }
+    setStoredAdminToken(tok, true);
+    adminAuthRequired = true;
+    hideLogin();
+    if (err) err.textContent = '';
+    bootApp();
+  } catch (e) {
+    if (err) err.textContent = e.message || '登录失败';
+  }
+}
+
+async function logoutAdmin() {
+  try {
+    await fetch(API + '/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (e) {}
+  clearStoredAdminToken();
+  const input = _('loginTokenInput');
+  if (input) input.value = '';
+  showLogin('');
+}
+
+async function ensureAdminAuth() {
+  try {
+    const res = await fetch(API + '/auth/status', { credentials: 'same-origin', headers: (() => {
+      const h = {};
+      const t = getStoredAdminToken();
+      if (t) { h['Authorization'] = 'Bearer ' + t; h['X-Admin-Token'] = t; }
+      return h;
+    })() });
+    const data = await res.json();
+    const d = data.data || {};
+    adminAuthRequired = !!d.required;
+    if (!d.required) {
+      hideLogin();
+      return true;
+    }
+    if (d.authenticated) {
+      hideLogin();
+      return true;
+    }
+    showLogin('');
+    return false;
+  } catch (e) {
+    // 网络异常时不阻塞本地开发：仍尝试加载
+    hideLogin();
+    return true;
+  }
+}
+
+function bootApp() {
+  loadStats();
+  loadAccounts();
+  loadKeys();
+  loadModels();
+  loadConfig();
 }
 
 // ========== 仪表盘 ==========
@@ -864,12 +1009,13 @@ async function loadConfig() {
 }
 
 // ========== 初始化 ==========
-loadStats();
-loadAccounts();
-loadKeys();
-loadModels();
-loadConfig();
-setInterval(() => { loadStats(); }, 10000);
+(async function init() {
+  const ok = await ensureAdminAuth();
+  if (ok) bootApp();
+  setInterval(() => {
+    if (_('loginOverlay') && _('loginOverlay').style.display === 'none') loadStats();
+  }, 10000);
+})();
 </script>
 </body>
 </html>`

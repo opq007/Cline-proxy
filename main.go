@@ -15,10 +15,14 @@ func main() {
 	captureMode := flag.Bool("capture", false, "Run interactive OAuth capture (records ALL traffic)")
 	host := flag.String("host", "0.0.0.0", "Listen host (0.0.0.0 allows LAN access)")
 	port := flag.Int("port", 3457, "Proxy server port")
+	adminTok := flag.String("admin-token", "", "Admin panel access token (env ADMIN_TOKEN / CLINE_ADMIN_TOKEN / config adminToken also work)")
 	addAccount := flag.Bool("add-account", false, "Add a new account via OAuth to the pool")
 	showList := flag.Bool("list", false, "List all accounts in the pool")
 	startMode := flag.Bool("start", false, "Build, start proxy, and open admin panel in browser")
 	flag.Parse()
+
+	// Resolve admin token early so -start / proxy share the same source of truth.
+	initAdminToken(*adminTok)
 
 	if *startMode {
 		buildAndStart(*host, *port)
@@ -95,7 +99,11 @@ func buildAndStart(host string, port int) {
 		fmt.Println("Proxy is already running.")
 	} else {
 		fmt.Println("Starting proxy...")
-		startCmd := exec.Command(exe, "-host", host, "-port", fmt.Sprintf("%d", port))
+		args := []string{"-host", host, "-port", fmt.Sprintf("%d", port)}
+		if t := getAdminToken(); t != "" {
+			args = append(args, "-admin-token", t)
+		}
+		startCmd := exec.Command(exe, args...)
 		startCmd.Stdout = os.Stdout
 		startCmd.Stderr = os.Stderr
 		if err := startCmd.Start(); err != nil {
