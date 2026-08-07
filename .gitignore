@@ -10,9 +10,10 @@ cline-proxy-*
 *.test
 *.out
 
-# Local data
+# Local data (accounts, keys, logs live under data/)
 .cline-accounts.json
-data/
+data/*
+!data/.gitkeep
 override.md
 
 .codegraph/

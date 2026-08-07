@@ -56,7 +56,7 @@ go run . -start
 |----------|------|
 | 环境变量 `ADMIN_TOKEN` 或 `CLINE_ADMIN_TOKEN` | 推荐 Docker / 公网 |
 | 启动参数 `-admin-token` | 优先级最高 |
-| 配置文件 `.cline-accounts.json` 字段 `adminToken` | 持久化，GET 接口不会回显明文 |
+| 配置文件 `data/.cline-accounts.json` 字段 `adminToken` | 持久化，GET 接口不会回显明文 |
 
 启用后：
 
@@ -69,19 +69,45 @@ go run . -start
 
 ### Docker 部署
 
+持久化目录为项目下的 **`./data/`**（整目录挂载到容器 `/app/data`），内含：
+
+| 文件 | 说明 |
+|------|------|
+| `data/.cline-accounts.json` | 账号池 + **API Keys** + 可选 `adminToken` |
+| `data/override.md` | 可选 system prompt 覆盖 |
+| `data/cline-proxy.log` | 运行日志 |
+
+> **不要**再把单个 `.cline-accounts.json` 文件 bind-mount 进容器。宿主机文件不存在时，Docker 会把挂载点建成**目录**，导致账号/Key 无法保存。
+
 ```bash
-# 公网务必传入 ADMIN_TOKEN
+# 1) 准备数据目录（首次）
+mkdir -p data
+
+# 若以前误把 .cline-accounts.json 建成了目录，先清掉再启动：
+# rm -rf .cline-accounts.json          # Linux/macOS
+# Remove-Item -Recurse -Force .cline-accounts.json   # PowerShell
+
+# 若根目录还有旧的账号文件，迁到 data/：
+# cp .cline-accounts.json data/.cline-accounts.json
+# cp override.md data/override.md   # 可选
+
+# 2) 公网务必传入 ADMIN_TOKEN
 export ADMIN_TOKEN='your-strong-secret'   # Windows PowerShell: $env:ADMIN_TOKEN='...'
-docker compose up -d
+docker compose up -d --build
 
 # 查看日志
 docker compose logs -f
 
-# 停止
+# 停止（保留 ./data）
 docker compose down
 ```
 
-数据持久化在 `./data/` 目录下，`override.md` 会自动从项目根目录挂载到容器内。
+本地直接运行时，默认也会使用（或创建）工作目录下的 `data/`；也可用环境变量覆盖：
+
+```bash
+export DATA_DIR=/path/to/data   # 或 CLINE_DATA_DIR
+./cline-proxy
+```
 
 ## 使用指南
 
@@ -204,10 +230,13 @@ Release 版本号以 `v` 开头，从 `v0.0.1` 开始按语义版本递增：首
 ├── Dockerfile            Docker 构建配置
 ├── docker-compose.yml    Docker Compose 配置
 ├── go.mod                Go 模块定义
-├── .cline-accounts.json  账号池数据
-├── override.md           可选的系统提示词覆盖文件
+├── data/                 持久化目录（Docker 挂载 ./data → /app/data）
+│   ├── .cline-accounts.json  账号池 + API Keys
+│   ├── override.md           可选系统提示词覆盖
+│   └── cline-proxy.log       运行日志
 └── README.md             项目说明
 ```
+
 
 ---
 

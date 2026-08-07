@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -21,26 +22,87 @@ func init() {
 	poolPath = resolveDataPath(".cline-accounts.json")
 }
 
-// resolveDataPath 数据文件路径解析：优先可执行文件目录，其次当前工作目录。
-// go run 运行时编译产物在临时目录，此时应回退到工作目录（项目根）查找数据文件。
-func resolveDataPath(filename string) string {
-	candidates := []string{}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), filename))
-	}
-	if pwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(pwd, filename))
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c
+// dataDir 返回持久化数据目录。
+// 优先级：DATA_DIR / CLINE_DATA_DIR 环境变量 → 已存在的 ./data 或 exe/data → 默认 <cwd>/data。
+// Docker 推荐：挂载 ./data:/app/data 并设置 DATA_DIR=/app/data，避免把单个文件 bind-mount
+// 成目录（Docker 在宿主机文件不存在时会创建目录，导致 .cline-accounts.json 变成文件夹）。
+func dataDir() string {
+	for _, key := range []string{"DATA_DIR", "CLINE_DATA_DIR"} {
+		if d := strings.TrimSpace(os.Getenv(key)); d != "" {
+			return d
 		}
 	}
-	// 都不存在：默认写到当前工作目录（go run 场景），保证数据落盘位置稳定
-	if len(candidates) > 1 {
-		return candidates[1]
+	var bases []string
+	if pwd, err := os.Getwd(); err == nil {
+		bases = append(bases, pwd)
 	}
-	return candidates[0]
+	if exe, err := os.Executable(); err == nil {
+		bases = append(bases, filepath.Dir(exe))
+	}
+	for _, b := range bases {
+		d := filepath.Join(b, "data")
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			return d
+		}
+	}
+	if len(bases) > 0 {
+		return filepath.Join(bases[0], "data")
+	}
+	return "data"
+}
+
+func ensureDataDir(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	return os.MkdirAll(dir, 0755)
+}
+
+func isRegularFile(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
+}
+
+// resolveDataPath 解析持久化文件路径（账号池、日志、override 等）。
+// - 若设置了 DATA_DIR / CLINE_DATA_DIR：始终使用该目录（Docker 场景，禁止回退到根目录旧文件）
+// - 未设置时：优先 data/ 下已有文件 → 兼容旧版根目录/可执行文件旁的同名*文件*
+// - 若路径是目录（Docker 文件 bind-mount 误创建），跳过并使用 data 目录路径
+func resolveDataPath(filename string) string {
+	explicit := false
+	for _, key := range []string{"DATA_DIR", "CLINE_DATA_DIR"} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			explicit = true
+			break
+		}
+	}
+	dir := dataDir()
+	_ = ensureDataDir(dir)
+	primary := filepath.Join(dir, filename)
+	if isRegularFile(primary) {
+		return primary
+	}
+	// Explicit DATA_DIR: never fall back to project-root legacy files.
+	if explicit {
+		return primary
+	}
+
+	// Legacy locations (pre-data-dir layout) — local/dev only
+	var legacy []string
+	if exe, err := os.Executable(); err == nil {
+		legacy = append(legacy, filepath.Join(filepath.Dir(exe), filename))
+	}
+	if pwd, err := os.Getwd(); err == nil {
+		legacy = append(legacy, filepath.Join(pwd, filename))
+	}
+	for _, c := range legacy {
+		if isRegularFile(c) {
+			return c
+		}
+		if st, err := os.Stat(c); err == nil && st.IsDir() {
+			log.Printf("WARNING: %s is a directory (likely bad Docker file bind-mount); using %s instead", c, primary)
+		}
+	}
+	return primary
 }
 
 func loadPool() *AccountPool {
@@ -48,6 +110,14 @@ func loadPool() *AccountPool {
 	defer poolMu.Unlock()
 
 	if pool != nil {
+		return pool
+	}
+
+	// Re-resolve in case init() ran before DATA_DIR was available, or path is a bad dir mount.
+	poolPath = resolveDataPath(".cline-accounts.json")
+	if st, err := os.Stat(poolPath); err == nil && st.IsDir() {
+		log.Printf("WARNING: pool path %s is a directory; refusing to load. Fix Docker volume (use ./data dir mount).", poolPath)
+		pool = &AccountPool{Accounts: []*Account{}, Keys: []string{}}
 		return pool
 	}
 
@@ -104,6 +174,15 @@ func savePoolLocked() {
 	poolSaveMu.Lock()
 	defer poolSaveMu.Unlock()
 
+	if err := ensureDataDir(filepath.Dir(poolPath)); err != nil {
+		log.Printf("Failed to create data dir for accounts: %v", err)
+		return
+	}
+	// Guard against Docker file-mount mistake: path became a directory.
+	if st, err := os.Stat(poolPath); err == nil && st.IsDir() {
+		log.Printf("FATAL: accounts path %s is a directory — remove it and use ./data volume mount instead", poolPath)
+		return
+	}
 	data, _ := json.MarshalIndent(pool, "", "  ")
 	if err := os.WriteFile(poolPath, data, 0600); err != nil {
 		log.Printf("Failed to save accounts: %v", err)

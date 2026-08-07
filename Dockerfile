@@ -12,13 +12,16 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /build/cline-proxy .
 
-EXPOSE 3457
-
+# 持久化目录（由 compose 挂载 ./data）
+RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
+EXPOSE 3457
+
 ENV PORT=3457
+ENV DATA_DIR=/app/data
 # 公网部署请设置 ADMIN_TOKEN（或 CLINE_ADMIN_TOKEN / -admin-token）
 # ENV ADMIN_TOKEN=
 
 ENTRYPOINT ["/app/cline-proxy"]
-CMD ["-port", "3457"]
+CMD ["-host", "0.0.0.0", "-port", "3457"]
