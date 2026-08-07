@@ -194,7 +194,7 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
     <div class="form-row">
       <div class="field">
         <label>出口代理（可选，空=宿主机直连）</label>
-        <input type="text" id="oauthProxy" placeholder="socks5://user:pass@host:1080 或 http://host:8080">
+        <input type="text" id="oauthProxy" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7891（端口要对：HTTP≠SOCKS）">
       </div>
     </div>
     <button class="btn btn-primary" onclick="startOAuth()" id="oauthBtn">🚀 开始 OAuth 登录</button>
@@ -230,7 +230,7 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
     <div class="form-row">
       <div class="field">
         <label>出口代理（可选）</label>
-        <input type="text" id="tokenProxy" placeholder="socks5://host:1080 或 http://host:8080">
+        <input type="text" id="tokenProxy" placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7891">
       </div>
     </div>
     <div class="form-actions">
