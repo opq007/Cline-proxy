@@ -17,6 +17,8 @@ EXPOSE 3457
 VOLUME ["/app/data"]
 
 ENV PORT=3457
+# 公网部署请设置 ADMIN_TOKEN（或 CLINE_ADMIN_TOKEN / -admin-token）
+# ENV ADMIN_TOKEN=
 
 ENTRYPOINT ["/app/cline-proxy"]
 CMD ["-port", "3457"]

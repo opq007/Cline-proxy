@@ -12,3 +12,5 @@ services:
       - ./override.md:/app/override.md:ro
     environment:
       - PORT=3457
+      # 公网部署务必设置：管理后台访问令牌（也可用 CLINE_ADMIN_TOKEN）
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}

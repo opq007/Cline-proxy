@@ -26,6 +26,9 @@ type AccountPool struct {
 	CurrentIdx   int        `json:"currentIdx"`
 	Keys         []string   `json:"keys,omitempty"`
 	DefaultModel string     `json:"defaultModel,omitempty"` // 用户自定义默认模型，持久化
+	// AdminToken 管理后台访问令牌（可与环境变量 ADMIN_TOKEN / -admin-token 二选一）。
+	// 仅服务端读取；GET /admin/api/config 不会返回该字段明文。
+	AdminToken string `json:"adminToken,omitempty"`
 }
 
 type LoginMethod int
