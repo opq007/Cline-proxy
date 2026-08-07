@@ -288,6 +288,8 @@ func startProxy(host string, port int) error {
 	fmt.Println("  API Key: pool keys (empty pool = open proxy API)")
 	fmt.Printf("  Model:   %s (auto-detected)\n", getDefaultModel())
 	fmt.Printf("  Accounts: %d total, %d active\n", len(loadPool().Accounts), activeCount)
+	fmt.Printf("  Data dir: %s\n", dataDir())
+	fmt.Printf("  Pool:     %s\n", poolPath)
 	fmt.Println(strings.Repeat("=", 58))
 
 	return server.ListenAndServe()
@@ -824,7 +826,7 @@ type anthropicReq struct {
 }
 
 func loadOverrideContent() string {
-	data, err := os.ReadFile("override.md")
+	data, err := os.ReadFile(resolveDataPath("override.md"))
 	if err != nil {
 		// override.md 是可选功能，文件不存在时静默使用客户端自带提示词
 		return ""

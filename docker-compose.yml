@@ -1,5 +1,10 @@
 version: "3.9"
 
+# 持久化说明：
+# - 只挂载「目录」./data → /app/data，不要把单个 .json 文件 bind-mount 进容器。
+# - Docker 在宿主机「文件不存在」时会把文件挂载点建成目录，导致 .cline-accounts.json 变成文件夹。
+# - 账号 / API Keys / 日志 / override.md 均写入 DATA_DIR（默认 /app/data）。
+
 services:
   cline-proxy:
     build: .
@@ -8,9 +13,11 @@ services:
     ports:
       - "3457:3457"
     volumes:
-      - ./.cline-accounts.json:/app/.cline-accounts.json:ro
-      - ./override.md:/app/override.md:ro
+      # 宿主机项目下的 data 目录整体映射（启动前会自动创建）
+      - ./data:/app/data
     environment:
       - PORT=3457
+      - DATA_DIR=/app/data
       # 公网部署务必设置：管理后台访问令牌（也可用 CLINE_ADMIN_TOKEN）
       - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+    # 可选：把宿主机已有的根目录旧文件拷进 data 后再启动，见 README
