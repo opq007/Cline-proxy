@@ -302,7 +302,8 @@ func handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 
 	device, err := workosDeviceAuthWithClient(client)
 	if err != nil {
-		writeAPI(w, http.StatusInternalServerError, apiResponse{Error: err.Error()})
+		// Surface scheme/port mismatch hints (e.g. HTTP client → SOCKS port).
+		writeAPI(w, http.StatusBadGateway, apiResponse{Error: classifyProxyDialError(err, proxyURL).Error()})
 		return
 	}
 
