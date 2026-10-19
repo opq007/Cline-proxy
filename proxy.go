@@ -510,6 +510,8 @@ func callClineAPI(params map[string]any, stream bool) (*http.Response, error) {
 			markAccountCooldown(acc, "429: "+reason, duration)
 			log.Printf("  account %s cooldown %v (reason: %s)", truncateEmail(acc.Email), duration, reason)
 		}
+		// 模型级失败回写：404/促销结束→下架，要求订阅→cost 改标 quota
+		noteModelCallFailure(modelID, resp.StatusCode, string(bodyBytes))
 		return nil, fmt.Errorf("API %d: %s", resp.StatusCode, truncate(string(bodyBytes), 500))
 	}
 

@@ -277,7 +277,7 @@ textarea{resize:vertical;min-height:80px;font-family:'Cascadia Code','Fira Code'
   <div class="section-body">
     <div style="margin-bottom:10px">
       <button class="btn btn-sm btn-primary" onclick="refreshModels()">🔄 刷新模型</button>
-      <span style="font-size:12px;color:var(--text2)">自动同步官方免费模型（60 分钟）；同步请求走账号出口代理。context=输入窗口，max_out=单次生成上限（≠上下文）</span>
+      <span style="font-size:12px;color:var(--text2)">与官方免费促销清单对账（60 分钟），下架失效模型；促销限时限量、可能随时结束，实际计费以上游返回为准。同步请求走账号出口代理。context=输入窗口，max_out=单次生成上限（≠上下文）</span>
     </div>
     <div id="modelsList">加载中...</div>
   </div>
@@ -933,9 +933,9 @@ async function loadModels() {
       const maxOut = m.maxOutputTokens || m.max_output_tokens || 0;
       const ctxLabel = ctx >= 1000000 ? (Math.round(ctx/100000)/10) + 'M ctx' : (ctx ? Math.round(ctx/1000) + 'K ctx' : '');
       const outLabel = maxOut ? Math.round(maxOut/1000) + 'K out' : '';
-      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;margin:4px 0;background:var(--bg3);border-radius:6px">' +
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;margin:4px 0;background:var(--bg3);border-radius:6px"' + (m.note ? ' title="' + esc(m.note) + '"' : '') + '>' +
         '<span style="font-family:monospace;font-size:13px;flex:1">' + esc(m.id) + '</span>' +
-        (m.cost === 'free' ? '<span style="font-size:11px;color:var(--green)">不扣费</span>' : '') +
+        (m.cost === 'free' ? '<span style="font-size:11px;color:var(--green)" title="促销期内免费，限时限量，可能随时下架">促销免费</span>' : '') +
         (ctxLabel ? '<span class="model-tag" title="输入上下文窗口">' + esc(ctxLabel) + '</span>' : '') +
         (outLabel ? '<span class="model-tag" title="单次 max_tokens 上限">' + esc(outLabel) + '</span>' : '') +
         (cost ? '<span class="model-tag">' + esc(cost) + '</span>' : '') +

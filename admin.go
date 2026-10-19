@@ -1072,9 +1072,10 @@ func handleAdminUpdateConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /admin/api/models
+// 管理面板返回全量视图（含已下架模型便于观测）；/v1/models 只含可用模型。
 func handleAdminModels(w http.ResponseWriter, r *http.Request) {
 	ensureModelsFresh()
-	models := getFreeModels()
+	models := getAllModels()
 	// 补全缺省的上下文/输出上限，避免前端只看到 id
 	for _, m := range models {
 		if m.ContextWindow <= 0 {
@@ -1087,7 +1088,7 @@ func handleAdminModels(w http.ResponseWriter, r *http.Request) {
 	writeAPI(w, http.StatusOK, apiResponse{Success: true, Data: map[string]any{
 		"models":   models,
 		"lastSync": modelsLastSync,
-		"note":     "contextWindow=输入上下文; maxOutputTokens=单次生成上限(max_tokens)，二者不同",
+		"note":     "contextWindow=输入上下文; maxOutputTokens=单次生成上限(max_tokens)。status=removed 的模型已下架，不会出现在 /v1/models，也不接受调用",
 	}})
 }
 
