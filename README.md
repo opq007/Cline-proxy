@@ -187,17 +187,22 @@ Model:    deepseek/deepseek-v4-flash
 | `google/gemini-2.5-flash` | ⚠️ 响应为空 · 消耗额度 | API 返回 200 但内容为空 |
 | `google/gemini-2.5-pro` | ⚠️ 响应为空 · 消耗额度 | API 返回 200 但内容为空 |
 
-### 官方免费模型
+### 官方免费模型（限时促销）
+
+> **重要**：官方免费模型是 Cline 的**限时促销**（官方文档明确"Free model usage is not supported through the Cline API"），
+> 促销名单滚动变化、有每日限额，调用资格以网关对账号状态的判定为准。代理现在以官方
+> `/ai/cline/recommended-models` 的 `free` 字段为**唯一事实来源做全量对账**：
+> 同步成功后，不在 feed 中的模型自动下架（`status=removed`，从 `/v1/models` 与可选列表消失）；
+> 实际调用收到 404/"promotion ended" 时即时下架，收到要求订阅/扣费类错误时把 `cost` 改标 `quota`（不再承诺免费）。
+> seed 条目仅作离线冷启动兜底，同样参与对账。
 
 | 模型 ID | 状态 | 说明 |
 |---------|:----:|------|
-| `deepseek/deepseek-v4-flash` | ✅ 可用 · 不消耗额度 | DeepSeek V4 Flash · 约 **1M 上下文** / 约 **131K 单次输出** |
-| `poolside/laguna-s-2.1:free` | ✅ 可用 · 不消耗额度 | Poolside Laguna S 2.1 |
-| `stepfun/step-3.7-flash` | ✅ 可用 · 不消耗额度 | StepFun 3.7 Flash |
+| （以官方 feed 实时对账为准） | - | 后台「可用模型」面板显示当前对账结果与原因（note） |
 
 > **注意**：日志里的 `max_tokens` 是**单次生成输出上限**，不是上下文窗口。  
 > DeepSeek V4 Flash 上下文约 1M；若客户端未传 `max_tokens`，代理默认按模型 `maxOutputTokens`（约 131K）转发，不会把上下文“砍成 128K”。  
-> free 列表 = **本地 seed（离线兜底）∪ 官方 `/ai/cline/recommended-models` 的 `free` 字段**。不在 seed 的模型（如曾 404 的 `cline-free/glm-5.2`）不会强行写入；若官方 feed 再次下发，同步后会自动出现，无永久黑名单。
+> 促销结束后模型可能继续出现在官方目录里（仍是付费模型），代理的下架逻辑可避免客户端选到这类必然 404/扣费的条目。
 
 ### 需要订阅
 
